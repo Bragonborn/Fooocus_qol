@@ -175,27 +175,63 @@ def generate_keywords_html(keywords, selected=None):
     return html
 
 def update_keywords_display(lora_filename, enabled):
+    # Don't show keywords if disabled or no LoRA selected
     if not enabled or lora_filename == "None":
         return gr.update(visible=False), gr.update(value=""), gr.update(value="")
     
-    metadata = get_lora_metadata(lora_filename)
-    if not metadata or not metadata.get("keywords"):
+    # Get metadata for the selected LoRA
+    try:
+        metadata = get_lora_metadata(lora_filename)
+        if not metadata or not metadata.get("keywords") or len(metadata.get("keywords", [])) == 0:
+            print(f"No keywords found for LoRA: {lora_filename}")
+            return gr.update(visible=False), gr.update(value=""), gr.update(value="")
+        
+        # Generate HTML for keywords display
+        keywords = metadata.get("keywords", [])
+        html = generate_keywords_html(keywords)
+        print(f"Found {len(keywords)} keywords for LoRA: {lora_filename}")
+        
+        # Make visible and return the HTML
+        return gr.update(visible=True), gr.update(value=html), gr.update(value="")
+    except Exception as e:
+        print(f"Error displaying keywords for {lora_filename}: {e}")
         return gr.update(visible=False), gr.update(value=""), gr.update(value="")
-    
-    html = generate_keywords_html(metadata.get("keywords", []))
-    return gr.update(visible=True), gr.update(value=html), gr.update(value="")
 
 def create_keywords_ui(gr_lib, lora_dropdown, lora_enabled):
-    with gr_lib.Column(visible=False) as keywords_column:
-        keywords_html = gr_lib.HTML(label="Keywords", elem_id=f"lora_keywords_{lora_dropdown.elem_id}")
-        selected_keywords = gr_lib.Textbox(label="Selected Keywords", elem_id=f"lora_selected_{lora_dropdown.elem_id}")
+    # Create a container for the keywords UI
+    with gr_lib.Column(visible=False, elem_classes=["keywords-ui-container"]) as keywords_column:
+        keywords_html = gr_lib.HTML(
+            label="Keywords - Click to select",
+            elem_id=f"lora_keywords_{lora_dropdown.elem_id}",
+            elem_classes=["keywords-display"]
+        )
+        selected_keywords = gr_lib.Textbox(
+            label="Selected Keywords",
+            elem_id=f"lora_selected_{lora_dropdown.elem_id}",
+            elem_classes=["selected-keywords"]
+        )
         
         with gr_lib.Row():
-            copy_button = gr_lib.Button("Copy to Clipboard", elem_id=f"copy_keywords_{lora_dropdown.elem_id}")
-            add_button = gr_lib.Button("Add to Prompt", elem_id=f"add_keywords_{lora_dropdown.elem_id}")
+            copy_button = gr_lib.Button(
+                "Copy to Clipboard",
+                elem_id=f"copy_keywords_{lora_dropdown.elem_id}",
+                elem_classes=["copy-keywords-button", "small-button"]
+            )
+            add_button = gr_lib.Button(
+                "Add to Prompt",
+                elem_id=f"add_keywords_{lora_dropdown.elem_id}",
+                elem_classes=["add-keywords-button", "small-button"]
+            )
     
-    # Connect change handler
+    # Connect LoRA dropdown change event to update keywords
     lora_dropdown.change(
+        fn=update_keywords_display,
+        inputs=[lora_dropdown, lora_enabled],
+        outputs=[keywords_column, keywords_html, selected_keywords]
+    )
+    
+    # Also update when the enabled checkbox changes
+    lora_enabled.change(
         fn=update_keywords_display,
         inputs=[lora_dropdown, lora_enabled],
         outputs=[keywords_column, keywords_html, selected_keywords]
@@ -211,17 +247,66 @@ def create_keywords_ui(gr_lib, lora_dropdown, lora_enabled):
 
 # JavaScript for keyword selection
 keywords_js = """
+// Initialize a MutationObserver to handle dynamically added keyword elements
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('LoRA Keywords: Setting up keyword functionality');
+    setupKeywordFunctionality();
+    
+    // Watch for changes to detect new keyword elements
+    const observer = new MutationObserver(function(mutations) {
+        mutations.forEach(function(mutation) {
+            if (mutation.addedNodes && mutation.addedNodes.length > 0) {
+                setupKeywordFunctionality();
+            }
+        });
+    });
+    
+    observer.observe(document.body, { childList: true, subtree: true });
+});
+
+function setupKeywordFunctionality() {
+    document.querySelectorAll('.keyword-tag').forEach(function(element) {
+        element.onclick = function() {
+            try {
+                toggleKeyword(this);
+            } catch(e) {
+                console.error('Error toggling keyword:', e);
+            }
+        };
+    });
+}
+
 function toggleKeyword(element) {
+    console.log('Toggling keyword:', element.textContent);
     element.classList.toggle('selected');
     
-    const container = element.closest('.lora-keywords-container');
-    const selectedArea = container.parentElement.parentElement.querySelector('input[id*="lora_selected"]');
-    const selectedKeywords = Array.from(
-        container.querySelectorAll('.keyword-tag.selected')
-    ).map(el => el.textContent).join(', ');
-    
-    selectedArea.value = selectedKeywords;
-    selectedArea.dispatchEvent(new Event('input', {bubbles: true}));
+    try {
+        // Find the container and the selected keywords textbox
+        const container = element.closest('.lora-keywords-container');
+        if (!container) {
+            console.error('Could not find lora-keywords-container');
+            return;
+        }
+        
+        // Navigate up to find the parent that contains both the keywords and the textbox
+        let parent = container.parentElement;
+        for (let i = 0; i < 5 && parent; i++) { // Look up to 5 levels up
+            const selectedArea = parent.querySelector('input[id*="lora_selected"]');
+            if (selectedArea) {
+                const selectedKeywords = Array.from(
+                    container.querySelectorAll('.keyword-tag.selected')
+                ).map(el => el.textContent).join(', ');
+                
+                console.log('Setting selected keywords:', selectedKeywords);
+                selectedArea.value = selectedKeywords;
+                selectedArea.dispatchEvent(new Event('input', {bubbles: true}));
+                break;
+            }
+            parent = parent.parentElement;
+        }
+    } catch (e) {
+        console.error('Error handling keyword selection:', e);
+    }
 }
 
 document.head.insertAdjacentHTML('beforeend', `<style>
@@ -232,29 +317,45 @@ document.head.insertAdjacentHTML('beforeend', `<style>
     margin-top: 8px;
     max-height: 120px;
     overflow-y: auto;
-    padding: 5px;
-    border-radius: 4px;
-    background-color: rgba(0, 0, 0, 0.03);
+    padding: 8px;
+    border-radius: 6px;
+    background-color: rgba(0, 0, 0, 0.05);
+    border: 1px solid rgba(0, 0, 0, 0.1);
 }
 .keyword-tag {
+    display: inline-block;
     background-color: #e0e0e0;
     border-radius: 4px;
-    padding: 4px 8px;
-    font-size: 12px;
-    cursor: pointer;
+    padding: 6px 10px;
+    font-size: 13px;
+    cursor: pointer !important;
     user-select: none;
     transition: all 0.2s ease;
-    border: 1px solid rgba(0, 0, 0, 0.1);
-    margin: 2px;
+    border: 1px solid rgba(0, 0, 0, 0.15);
+    margin: 3px;
+    position: relative;
+    z-index: 10;
 }
 .keyword-tag:hover {
     background-color: #d0d0d0;
     transform: translateY(-1px);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    z-index: 20;
+    cursor: pointer !important;
+    pointer-events: auto !important;
 }
 .keyword-tag.selected {
     background-color: #2196F3;
     color: white;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    font-weight: bold;
+}
+/* Make sure Gradio doesn't block our interactions */
+.gradio-container {
+    pointer-events: auto !important;
+}
+div[id^="lora_keywords_"] * {
+    pointer-events: auto !important;
 }
 </style>`);
 """

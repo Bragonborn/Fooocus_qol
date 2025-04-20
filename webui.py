@@ -712,23 +712,77 @@ with shared.gradio_root:
                             """
                         )
                         
-                        # Connect add button to prompt
-                        def add_keywords_to_prompt(selected_keywords, current_prompt):
-                            if not selected_keywords:
-                                return current_prompt
-                            
-                            # Add keywords to prompt
-                            if current_prompt and current_prompt.strip():
-                                # Add to existing prompt
-                                return f"{current_prompt.strip()}, {selected_keywords}"
-                            else:
-                                # Set as new prompt
-                                return selected_keywords
-                        
+                        # Connect add button to prompt with direct JS for more reliable interaction
                         keywords_ui["add_button"].click(
-                            fn=add_keywords_to_prompt,
-                            inputs=[keywords_ui["selected"], shared.prompt_textbox],
-                            outputs=[shared.prompt_textbox]
+                            fn=lambda: None,  # No Python function needed
+                            inputs=[],
+                            outputs=[],
+                            _js=f"""
+                            function() {{
+                                // Get the selected keywords
+                                const selectedArea = document.getElementById("{keywords_ui['selected'].elem_id}");
+                                const promptArea = document.getElementById("positive_prompt");
+                                
+                                if (selectedArea && promptArea && selectedArea.value) {{
+                                    // Get current prompt text
+                                    const currentPrompt = promptArea.value || "";
+                                    const selectedKeywords = selectedArea.value;
+                                    
+                                    // Add keywords to prompt
+                                    if (currentPrompt.trim()) {{
+                                        // Add to existing prompt
+                                        promptArea.value = `${{currentPrompt.trim()}}, ${{selectedKeywords}}`;
+                                    }} else {{
+                                        // Set as new prompt
+                                        promptArea.value = selectedKeywords;
+                                    }}
+                                    
+                                    // Trigger update event
+                                    promptArea.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                                    
+                                    // Visual feedback
+                                    const button = document.getElementById("{keywords_ui['add_button'].elem_id}");
+                                    if (button) {{
+                                        const originalText = button.textContent;
+                                        button.textContent = "Added! ✓";
+                                        setTimeout(() => {{
+                                            button.textContent = originalText;
+                                        }}, 1000);
+                                    }}
+                                }}
+                                return [];
+                            }}
+                            """
+                        )
+                        
+                        # Connect copy button with direct JS for more reliable copying
+                        keywords_ui["copy_button"].click(
+                            fn=lambda: None,  # No Python function needed
+                            inputs=[],
+                            outputs=[],
+                            _js=f"""
+                            function() {{
+                                const selectedArea = document.getElementById("{keywords_ui['selected'].elem_id}");
+                                if (selectedArea && selectedArea.value) {{
+                                    navigator.clipboard.writeText(selectedArea.value)
+                                        .then(() => {{
+                                            // Visual feedback
+                                            const button = document.getElementById("{keywords_ui['copy_button'].elem_id}");
+                                            if (button) {{
+                                                const originalText = button.textContent;
+                                                button.textContent = "Copied! ✓";
+                                                setTimeout(() => {{
+                                                    button.textContent = originalText;
+                                                }}, 1000);
+                                            }}
+                                        }})
+                                        .catch(err => {{
+                                            console.error('Failed to copy: ', err);
+                                        }});
+                                }}
+                                return [];
+                            }}
+                            """
                         )
 
                 with gr.Row():
