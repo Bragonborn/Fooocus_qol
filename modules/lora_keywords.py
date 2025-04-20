@@ -247,66 +247,123 @@ def create_keywords_ui(gr_lib, lora_dropdown, lora_enabled):
 
 # JavaScript for keyword selection
 keywords_js = """
-// Initialize a MutationObserver to handle dynamically added keyword elements
-document.addEventListener('DOMContentLoaded', function() {
-    console.log('LoRA Keywords: Setting up keyword functionality');
-    setupKeywordFunctionality();
+// Less invasive initialization - only run once the DOM is fully loaded
+(function() {
+    // Wait for the page to be fully loaded
+    if (document.readyState === 'complete') {
+        initializeKeywords();
+    } else {
+        window.addEventListener('load', initializeKeywords);
+    }
     
-    // Watch for changes to detect new keyword elements
-    const observer = new MutationObserver(function(mutations) {
-        mutations.forEach(function(mutation) {
-            if (mutation.addedNodes && mutation.addedNodes.length > 0) {
-                setupKeywordFunctionality();
+    function initializeKeywords() {
+        console.log('LoRA Keywords: Initializing keyword functionality');
+        setupKeywordFunctionality();
+        
+        // Create a more targeted observer that only watches for our keyword elements
+        const observer = new MutationObserver(function(mutations) {
+            for (const mutation of mutations) {
+                // Only process if we have added nodes
+                if (mutation.addedNodes && mutation.addedNodes.length > 0) {
+                    // Check if any of the added nodes contain our keywords containers
+                    for (const node of mutation.addedNodes) {
+                        if (node.querySelector && node.querySelector('.keyword-tag, [id^="lora_keywords_"]')) {
+                            setupKeywordFunctionality();
+                            break;
+                        }
+                    }
+                }
             }
         });
-    });
-    
-    observer.observe(document.body, { childList: true, subtree: true });
-});
+        
+        // Only observe the main content area where our elements would be added
+        const mainContent = document.querySelector('.gradio-container');
+        if (mainContent) {
+            observer.observe(mainContent, {
+                childList: true,
+                subtree: true,
+                attributes: false,
+                characterData: false
+            });
+        }
+    }
+})();
 
 function setupKeywordFunctionality() {
-    document.querySelectorAll('.keyword-tag').forEach(function(element) {
-        element.onclick = function() {
-            try {
-                toggleKeyword(this);
-            } catch(e) {
-                console.error('Error toggling keyword:', e);
-            }
-        };
+    // Use a specific selector that only targets our keyword tags
+    document.querySelectorAll('[id^="lora_keywords_"] .keyword-tag').forEach(function(element) {
+        // Remove any existing handler first to avoid duplicates
+        element.removeEventListener('click', keywordClickHandler);
+        // Add our handler
+        element.addEventListener('click', keywordClickHandler);
     });
 }
 
-function toggleKeyword(element) {
-    console.log('Toggling keyword:', element.textContent);
-    element.classList.toggle('selected');
+function keywordClickHandler(event) {
+    // Stop event propagation to prevent interfering with other elements
+    event.stopPropagation();
+    event.preventDefault();
     
     try {
-        // Find the container and the selected keywords textbox
+        toggleKeyword(this);
+    } catch(e) {
+        console.error('Error toggling keyword:', e);
+    }
+    
+    return false;
+}
+
+function toggleKeyword(element) {
+    // Don't do anything that could affect the broader UI
+    // Just toggle our specific element's class in a contained way
+    if (!element || typeof element.classList === 'undefined') return;
+    
+    try {
+        // Simply toggle the selected class - minimal DOM manipulation
+        element.classList.toggle('selected');
+        
+        // Find the container in a direct, specific way
         const container = element.closest('.lora-keywords-container');
-        if (!container) {
-            console.error('Could not find lora-keywords-container');
-            return;
+        if (!container) return;
+        
+        // Get the ID of the keywords element to find the corresponding selected area
+        // Look for a nearby element with id that matches our pattern
+        let keywordsElement = container;
+        while (keywordsElement && (!keywordsElement.id || !keywordsElement.id.includes('lora_keywords_'))) {
+            keywordsElement = keywordsElement.parentElement;
+            if (!keywordsElement || keywordsElement.classList.contains('gradio-container')) break;
         }
         
-        // Navigate up to find the parent that contains both the keywords and the textbox
-        let parent = container.parentElement;
-        for (let i = 0; i < 5 && parent; i++) { // Look up to 5 levels up
-            const selectedArea = parent.querySelector('input[id*="lora_selected"]');
-            if (selectedArea) {
-                const selectedKeywords = Array.from(
-                    container.querySelectorAll('.keyword-tag.selected')
-                ).map(el => el.textContent).join(', ');
-                
-                console.log('Setting selected keywords:', selectedKeywords);
-                selectedArea.value = selectedKeywords;
-                selectedArea.dispatchEvent(new Event('input', {bubbles: true}));
-                break;
-            }
-            parent = parent.parentElement;
-        }
-    } catch (e) {
-        console.error('Error handling keyword selection:', e);
-    }
+        if (!keywordsElement || !keywordsElement.id) return;
+        
+        // Extract the matching part to find the related selected input
+        const idParts = keywordsElement.id.split('lora_keywords_');
+        if (idParts.length !== 2) return;
+        
+        // Find the matching selected keywords input
+        const selectedElementId = 'lora_selected_' + idParts[1];
+        const selectedArea = document.getElementById(selectedElementId);
+        
+        if (!selectedArea) return;
+        
+        // Get only selected keywords from our container
+        const selectedKeywords = Array.from(
+            container.querySelectorAll('.keyword-tag.selected')
+        ).map(el => el.textContent.trim()).join(', ');
+        
+        // Update the value without affecting the rest of the UI
+        selectedArea.value = selectedKeywords;
+        
+        // Trigger the input event in a safe way
+        try {
+            // Create a contained input event
+            const inputEvent = new Event('input', {
+                bubbles: false,  // Don't bubble up to avoid affecting other components
+                cancelable: false
+            });
+            selectedArea.dispatchEvent(inputEvent);
+        } catch (ignored) {}
+    } catch (ignored) {}
 }
 
 document.head.insertAdjacentHTML('beforeend', `<style>
@@ -350,11 +407,11 @@ document.head.insertAdjacentHTML('beforeend', `<style>
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
     font-weight: bold;
 }
-/* Make sure Gradio doesn't block our interactions */
-.gradio-container {
+/* Target only our specific elements without affecting the rest of the UI */
+div[id^="lora_keywords_"] {
     pointer-events: auto !important;
 }
-div[id^="lora_keywords_"] * {
+div.keyword-tag {
     pointer-events: auto !important;
 }
 </style>`);
