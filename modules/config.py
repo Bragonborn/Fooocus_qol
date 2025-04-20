@@ -668,6 +668,14 @@ metadata_created_by = get_config_item_or_set_default(
     expected_type=str
 )
 
+civitai_api_key = get_config_item_or_set_default(
+    key='civitai_api_key',
+    default_value='',
+    validator=lambda x: isinstance(x, str),
+    disable_empty_as_none=True,
+    expected_type=str
+)
+
 example_inpaint_prompts = [[x] for x in example_inpaint_prompts]
 example_enhance_detection_prompts = [[x] for x in example_enhance_detection_prompts]
 
