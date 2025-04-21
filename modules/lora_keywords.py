@@ -247,6 +247,34 @@ def create_keywords_ui(gr_lib, lora_dropdown, lora_enabled):
         "keywords": keywords_textbox
     }
 
+# Simple JavaScript for styling
+keywords_js = """
+// Add custom CSS for LoRA keywords display
+document.addEventListener('DOMContentLoaded', function() {
+    // Create style element
+    const style = document.createElement('style');
+    style.textContent = `
+        .keywords-ui-container {
+            margin-top: 10px;
+            margin-bottom: 10px;
+        }
+        
+        .keywords-header {
+            margin-bottom: 5px;
+            color: #2196F3;
+            font-weight: bold;
+        }
+        
+        .keywords-display textarea {
+            font-family: var(--font);
+            border-radius: 0.5rem;
+            border: 2px solid rgba(33, 150, 243, 0.3);
+        }
+    `;
+    document.head.appendChild(style);
+});
+"""
+
 # Initialize
 is_running = True
 request_thread = threading.Thread(target=process_requests, daemon=True)
