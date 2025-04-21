@@ -180,8 +180,8 @@ def generate_keywords_html(keywords, selected=None):
         if not kw:  # Skip empty keywords
             continue
         cls = " selected" if kw in selected else ""
-        # Use data attributes to store the keyword and input ID
-        html += f'<div class="keyword-tag{cls}" data-keyword="{kw}" onclick="clickKeywordTag(event, this)">{kw}</div>'
+        # Add data attributes for the keyword and the ID of the textbox to update
+        html += f'<div class="keyword-tag{cls}" data-keyword="{kw}" data-input-id="{selected}" onclick="clickKeywordTag(event, this)">{kw}</div>'
     
     html += '</div>'
     return html
@@ -256,22 +256,87 @@ def create_keywords_ui(gr_lib, lora_dropdown, lora_enabled):
             )
     
         # Add dummy functions for the buttons
-        def noop(*args):
-            return args[0] if args else None
+        # Direct function to add keywords to prompt
+        def add_keywords_to_prompt(selected_text, prompt_text=""):
+            # Properly handle the Python side
+            if not selected_text:
+                return prompt_text
+                
+            if prompt_text and prompt_text.strip():
+                return f"{prompt_text.strip()}, {selected_text}"
+            else:
+                return selected_text
+        
+        # Function to "copy" to clipboard (JS does actual copying)
+        def copy_keywords(selected_text):
+            # Just return the selected text to avoid errors
+            return selected_text
             
-        # Connect with minimal Python but direct JavaScript implementations
+        # Connect copy button properly
         copy_button.click(
-            fn=noop,
+            fn=copy_keywords,
             inputs=[selected_keywords],
-            outputs=None,
-            _js="copySelectedKeywords"  # This function is defined in keywords_js
+            outputs=[selected_keywords],
+            _js="""
+            function(text) {
+                // This JS function will be executed when the button is clicked
+                if (text) {
+                    // Create a temporary element
+                    const el = document.createElement('textarea');
+                    el.value = text;
+                    document.body.appendChild(el);
+                    el.select();
+                    
+                    // Copy the text
+                    document.execCommand('copy');
+                    document.body.removeChild(el);
+                    
+                    // Show feedback
+                    const button = document.querySelector('.copy-keywords-button');
+                    if (button) {
+                        const originalText = button.textContent;
+                        button.textContent = "Copied! ✓";
+                        setTimeout(() => {
+                            button.textContent = originalText;
+                        }, 1000);
+                    }
+                }
+                return text;
+            }
+            """
         )
         
+        # Connect add button with proper Python function
+        from modules.shared import prompt_textbox
+        
+        # Connect add button properly - needs two inputs AND two outputs
         add_button.click(
-            fn=noop,
-            inputs=[selected_keywords],
-            outputs=None,
-            _js="addKeywordsToPrompt"  # This function is defined in keywords_js
+            fn=add_keywords_to_prompt,
+            inputs=[selected_keywords, prompt_textbox],
+            outputs=[prompt_textbox],
+            _js="""
+            function(selectedText, promptText) {
+                // This is just to show visual feedback
+                const button = document.querySelector('.add-keywords-button');
+                if (button) {
+                    const originalText = button.textContent;
+                    button.textContent = "Added! ✓";
+                    setTimeout(() => {
+                        button.textContent = originalText;
+                    }, 1000);
+                }
+                
+                // The actual adding is handled by the Python function
+                if (selectedText && promptText !== undefined) {
+                    if (promptText && promptText.trim()) {
+                        return promptText.trim() + ", " + selectedText;
+                    } else {
+                        return selectedText;
+                    }
+                }
+                return promptText || "";
+            }
+            """
         )
         
     # Connect LoRA dropdown change event to update keywords
@@ -324,39 +389,108 @@ function findRelatedSelectedTextbox(keywordContainer) {
     return document.querySelector('textarea[id*="lora_selected"]');
 }
 
-// Click handler for keyword tags
+// Click handler for keyword tags - enhanced for reliability
 function clickKeywordTag(event, element) {
-    // Prevent default browser behavior
-    if (event) {
-        event.preventDefault();
-        event.stopPropagation();
+    try {
+        // Prevent default browser behavior
+        if (event) {
+            event.preventDefault();
+            event.stopPropagation();
+        }
+        
+        // Debug log
+        console.log('Keyword clicked:', element.textContent);
+        
+        // Toggle selection class
+        element.classList.toggle('selected');
+        
+        // Find the container with all keywords
+        const container = element.closest('.lora-keywords-container');
+        if (!container) {
+            console.error('Could not find keywords container');
+            return;
+        }
+        
+        // Try multiple approaches to find the textbox
+        let textbox = null;
+        
+        // Approach 1: Using the parent form or container
+        const parentContainer = container.closest('.keywords-ui-container');
+        if (parentContainer) {
+            textbox = parentContainer.querySelector('textarea[id*="lora_selected"]');
+            if (textbox) console.log('Found textbox via parent container');
+        }
+        
+        // Approach 2: Look in the closest form
+        if (!textbox) {
+            const form = container.closest('form');
+            if (form) {
+                const boxes = form.querySelectorAll('textarea[id*="lora_selected"]');
+                if (boxes.length > 0) {
+                    textbox = boxes[0];
+                    console.log('Found textbox via form');
+                }
+            }
+        }
+        
+        // Approach 3: Search in DOM vicinity
+        if (!textbox) {
+            let currentNode = container;
+            for (let i = 0; i < 5 && currentNode; i++) {
+                currentNode = currentNode.parentElement;
+                if (!currentNode) break;
+                
+                // Look for the textarea in this parent element
+                const found = currentNode.querySelector('textarea[id*="lora_selected"]');
+                if (found) {
+                    textbox = found;
+                    console.log('Found textbox via DOM traversal');
+                    break;
+                }
+            }
+        }
+        
+        // Last resort - grab any textbox with lora_selected in its ID
+        if (!textbox) {
+            const allBoxes = document.querySelectorAll('textarea[id*="lora_selected"]');
+            if (allBoxes.length > 0) {
+                textbox = allBoxes[0];
+                console.log('Found textbox via document query');
+            }
+        }
+        
+        if (!textbox) {
+            console.error('Could not find selected keywords textbox');
+            return;
+        }
+        
+        // Get all selected keywords
+        const selectedElements = container.querySelectorAll('.keyword-tag.selected');
+        const selectedKeywords = Array.from(selectedElements)
+            .map(el => el.textContent.trim())
+            .join(', ');
+        
+        console.log('Selected keywords:', selectedKeywords);
+        console.log('Updating textbox:', textbox.id);
+        
+        // Update the textbox directly
+        textbox.value = selectedKeywords;
+        
+        // Use multiple event dispatching methods for reliability
+        try {
+            // Update using direct property setting and events
+            textbox.textContent = selectedKeywords;
+            textbox.dispatchEvent(new Event('input', { bubbles: true }));
+            textbox.dispatchEvent(new Event('change', { bubbles: true }));
+            
+            // Force UI update through parent reflow
+            textbox.parentElement.style.display = textbox.parentElement.style.display;
+        } catch (err) {
+            console.error('Error dispatching events:', err);
+        }
+    } catch (error) {
+        console.error('Error in clickKeywordTag:', error);
     }
-    
-    // Toggle selection class
-    element.classList.toggle('selected');
-    
-    // Find the container with all keywords
-    const container = element.closest('.lora-keywords-container');
-    if (!container) return;
-    
-    // Find the associated textbox
-    const textbox = findRelatedSelectedTextbox(container);
-    if (!textbox) {
-        console.error('Could not find selected keywords textbox');
-        return;
-    }
-    
-    // Get all selected keywords
-    const selectedElements = container.querySelectorAll('.keyword-tag.selected');
-    const selectedKeywords = Array.from(selectedElements)
-        .map(el => el.textContent.trim())
-        .join(', ');
-    
-    // Update the textbox
-    textbox.value = selectedKeywords;
-    
-    // Trigger input event for Gradio
-    textbox.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
 // Copy selected keywords to clipboard
