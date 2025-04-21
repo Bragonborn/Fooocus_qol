@@ -256,43 +256,29 @@ def create_keywords_ui(gr_lib, lora_dropdown, lora_enabled):
             )
     
         # Add dummy functions for the buttons
-        # Direct function to add keywords to prompt
-        def add_keywords_to_prompt(selected_text, prompt_text=""):
-            # Properly handle the Python side
-            if not selected_text:
-                return prompt_text
-                
-            if prompt_text and prompt_text.strip():
-                return f"{prompt_text.strip()}, {selected_text}"
-            else:
-                return selected_text
+        # Simple function that returns its input
+        def noop(x):
+            return x
         
-        # Function to "copy" to clipboard (JS does actual copying)
-        def copy_keywords(selected_text):
-            # Just return the selected text to avoid errors
-            return selected_text
-            
-        # Connect copy button properly
+        # Connect the buttons with simplified JavaScript-only handling
         copy_button.click(
-            fn=copy_keywords,
+            fn=noop,
             inputs=[selected_keywords],
             outputs=[selected_keywords],
             _js="""
             function(text) {
-                // This JS function will be executed when the button is clicked
-                if (text) {
-                    // Create a temporary element
-                    const el = document.createElement('textarea');
-                    el.value = text;
-                    document.body.appendChild(el);
-                    el.select();
-                    
-                    // Copy the text
+                // Create a temporary element
+                const el = document.createElement('textarea');
+                el.value = text || '';
+                document.body.appendChild(el);
+                el.select();
+                
+                try {
+                    // Copy text to clipboard
                     document.execCommand('copy');
-                    document.body.removeChild(el);
                     
                     // Show feedback
-                    const button = document.querySelector('.copy-keywords-button');
+                    const button = document.activeElement;
                     if (button) {
                         const originalText = button.textContent;
                         button.textContent = "Copied! ✓";
@@ -300,41 +286,53 @@ def create_keywords_ui(gr_lib, lora_dropdown, lora_enabled):
                             button.textContent = originalText;
                         }, 1000);
                     }
+                } catch(e) {
+                    console.error('Copy failed:', e);
+                } finally {
+                    document.body.removeChild(el);
                 }
-                return text;
+                
+                return text || '';
             }
             """
         )
         
-        # Connect add button with proper Python function
-        from modules.shared import prompt_textbox
-        
-        # Connect add button properly - needs two inputs AND two outputs
+        # Add to prompt without Python dependency
         add_button.click(
-            fn=add_keywords_to_prompt,
-            inputs=[selected_keywords, prompt_textbox],
-            outputs=[prompt_textbox],
+            fn=noop,
+            inputs=[selected_keywords],
+            outputs=[selected_keywords],
             _js="""
-            function(selectedText, promptText) {
-                // This is just to show visual feedback
-                const button = document.querySelector('.add-keywords-button');
-                if (button) {
-                    const originalText = button.textContent;
-                    button.textContent = "Added! ✓";
-                    setTimeout(() => {
-                        button.textContent = originalText;
-                    }, 1000);
-                }
+            function(selectedText) {
+                // Get the prompt element directly
+                const promptElement = document.getElementById('positive_prompt');
                 
-                // The actual adding is handled by the Python function
-                if (selectedText && promptText !== undefined) {
-                    if (promptText && promptText.trim()) {
-                        return promptText.trim() + ", " + selectedText;
+                if (promptElement && selectedText) {
+                    // Get current prompt content
+                    const currentPrompt = promptElement.value || '';
+                    
+                    // Add the selected keywords
+                    if (currentPrompt && currentPrompt.trim()) {
+                        promptElement.value = currentPrompt.trim() + ', ' + selectedText;
                     } else {
-                        return selectedText;
+                        promptElement.value = selectedText;
+                    }
+                    
+                    // Trigger input event
+                    promptElement.dispatchEvent(new Event('input', { bubbles: true }));
+                    
+                    // Show feedback
+                    const button = document.activeElement;
+                    if (button) {
+                        const originalText = button.textContent;
+                        button.textContent = "Added! ✓";
+                        setTimeout(() => {
+                            button.textContent = originalText;
+                        }, 1000);
                     }
                 }
-                return promptText || "";
+                
+                return selectedText || '';
             }
             """
         )
