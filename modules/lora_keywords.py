@@ -8,6 +8,7 @@ from queue import Queue
 import gradio as gr
 from modules.hash_cache import sha256_from_cache
 from modules.util import get_file_from_folder_list
+import modules.config as config
 
 # Constants and globals
 CIVITAI_API_BASE = "https://civitai.com/api/v1"
@@ -82,7 +83,7 @@ def save_metadata(lora_path, metadata):
 
 # CivitAI API functions
 def get_civitai_api_key():
-    return getattr(modules.config, "civitai_api_key", "") or ""
+    return getattr(config, "civitai_api_key", "") or ""
 
 def fetch_from_civitai(hash_value):
     url = f"{CIVITAI_API_BASE}/model-versions/by-hash/{hash_value}"
@@ -113,7 +114,7 @@ def get_lora_metadata(lora_filename, refresh=False):
     if os.path.exists(lora_filename):
         lora_path = lora_filename
     else:
-        lora_path = get_file_from_folder_list(lora_filename, modules.config.paths_loras)
+        lora_path = get_file_from_folder_list(lora_filename, config.paths_loras)
     
     if not lora_path or not os.path.exists(lora_path):
         return None
