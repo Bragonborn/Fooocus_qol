@@ -693,81 +693,10 @@ with shared.gradio_root:
                                                     elem_classes='lora_weight', scale=5)
                             lora_ctrls += [lora_enabled, lora_model, lora_weight]
                             
-                        # Add keywords UI components directly in the row for better visibility
+                        # Add simplified keywords UI - just displays keywords for copying
                         with gr.Row():
                             keywords_ui = modules.lora_keywords.create_keywords_ui(gr, lora_model, lora_enabled)
                             lora_keywords_components.append(keywords_ui)
-                        
-                        # Connect copy button to clipboard
-                        keywords_ui["copy_button"].click(
-                            fn=lambda s: gr.update(),
-                            inputs=[keywords_ui["selected"]],
-                            outputs=[keywords_ui["selected"]],
-                            _js="""
-                            function(selectedText) {
-                                if (selectedText) {
-                                    navigator.clipboard.writeText(selectedText);
-                                }
-                                return selectedText;
-                            }
-                            """
-                        )
-                        
-                        # Connect add button to prompt with direct JS for more reliable interaction
-                        # Define a function to add selected keywords to the prompt
-                        def add_keywords_to_prompt(selected_keywords, current_prompt):
-                            if not selected_keywords:
-                                return current_prompt
-                            
-                            # Add keywords to prompt
-                            if current_prompt and current_prompt.strip():
-                                return f"{current_prompt.strip()}, {selected_keywords}"
-                            else:
-                                return selected_keywords
-                        
-                        # Connect add button to prompt with both Python and JS for reliability
-                        keywords_ui["add_button"].click(
-                            fn=add_keywords_to_prompt,
-                            inputs=[keywords_ui["selected"], shared.prompt_textbox],
-                            outputs=[shared.prompt_textbox],
-                            _js=f"""
-                            function(selectedText, promptText) {{
-                                console.log("Adding keywords to prompt:", selectedText);
-                                
-                                if (!selectedText) return promptText;
-                                
-                                if (promptText && promptText.trim()) {{
-                                    return promptText.trim() + ", " + selectedText;
-                                }} else {{
-                                    return selectedText;
-                                }}
-                            }}
-                            """
-                        )
-                        
-                        # Connect copy button to clipboard
-                        keywords_ui["copy_button"].click(
-                            fn=lambda s: gr.update(),
-                            inputs=[keywords_ui["selected"]],
-                            outputs=[keywords_ui["selected"]],
-                            _js="""
-                            function(selectedText) {
-                                if (selectedText) {
-                                    navigator.clipboard.writeText(selectedText);
-                                    // Show visual feedback (optional)
-                                    const button = document.querySelector('.copy-keywords-button');
-                                    if (button) {
-                                        const originalText = button.textContent;
-                                        button.textContent = "Copied! ✓";
-                                        setTimeout(() => {
-                                            button.textContent = originalText;
-                                        }, 1000);
-                                    }
-                                }
-                                return selectedText;
-                            }
-                            """
-                        )
 
                 with gr.Row():
                     refresh_files = gr.Button(label='Refresh', value='\U0001f504 Refresh All Files', variant='secondary', elem_classes='refresh_button')
