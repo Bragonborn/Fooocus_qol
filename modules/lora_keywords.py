@@ -180,7 +180,7 @@ def generate_keywords_html(keywords, selected=None):
         if not kw:  # Skip empty keywords
             continue
         cls = " selected" if kw in selected else ""
-        html += f'<div class="keyword-tag{cls}" data-keyword="{kw}" onclick="keywordClickHandler(event, this)">{kw}</div>'
+        html += f'<div class="keyword-tag{cls}" data-keyword="{kw}" onclick="keywordClickHandler(this)">{kw}</div>'
     
     html += '</div>'
     return html
@@ -235,7 +235,9 @@ def create_keywords_ui(gr_lib, lora_dropdown, lora_enabled):
             label="Selected Keywords", 
             elem_id=f"lora_selected_{lora_dropdown.elem_id}",
             elem_classes=["selected-keywords"],
-            lines=2  # Make the textbox taller for better visibility
+            lines=2,  # Make the textbox taller for better visibility
+            interactive=False,  # Make it read-only
+            placeholder="Click on keywords above to select them"
         )
         
         with gr_lib.Row():
@@ -251,6 +253,105 @@ def create_keywords_ui(gr_lib, lora_dropdown, lora_enabled):
                 elem_classes=["add-keywords-button", "small-button"],
                 variant="primary"  # Make the button more visible
             )
+        
+        # Connect buttons using simple functions that directly update the UI
+        def copy_to_clipboard(text):
+            # Simple function to return the text unmodified
+            return text
+        
+        def add_to_prompt(selected_text, current_prompt=None):
+            # In Python, just pass the text through
+            # The work is done in JavaScript
+            return selected_text
+        
+        # Connect copy button - uses execCommand for better browser compatibility
+        copy_button.click(
+            fn=copy_to_clipboard,
+            inputs=[selected_keywords],
+            outputs=[],
+            _js="""
+            function(selectedText) {
+                if (!selectedText) return;
+                
+                // Create a temporary textarea element
+                const textArea = document.createElement('textarea');
+                textArea.value = selectedText;
+                
+                // Make the textarea out of the viewport
+                textArea.style.position = 'fixed';
+                textArea.style.left = '-999999px';
+                textArea.style.top = '-999999px';
+                document.body.appendChild(textArea);
+                
+                // Select and copy the text
+                textArea.focus();
+                textArea.select();
+                
+                try {
+                    // Execute the copy command
+                    document.execCommand('copy');
+                    console.log('Text copied to clipboard');
+                    
+                    // Visual feedback
+                    const button = document.activeElement;
+                    if (button) {
+                        const originalText = button.textContent;
+                        button.textContent = 'Copied! ✓';
+                        setTimeout(() => {
+                            button.textContent = originalText;
+                        }, 1000);
+                    }
+                } catch (err) {
+                    console.error('Error copying text: ', err);
+                }
+                
+                // Clean up
+                document.body.removeChild(textArea);
+            }
+            """
+        )
+        
+        # Connect add button with a simpler approach
+        add_button.click(
+            fn=add_to_prompt,
+            inputs=[selected_keywords],
+            outputs=[],
+            _js="""
+            function(selectedText) {
+                if (!selectedText) return;
+                
+                // Get the prompt textbox
+                const promptBox = document.getElementById('positive_prompt');
+                if (!promptBox) {
+                    console.error('Could not find prompt textbox');
+                    return;
+                }
+                
+                // Get current prompt
+                let currentPrompt = promptBox.value || '';
+                
+                // Add keywords to prompt
+                if (currentPrompt && currentPrompt.trim()) {
+                    promptBox.value = currentPrompt.trim() + ', ' + selectedText;
+                } else {
+                    promptBox.value = selectedText;
+                }
+                
+                // Trigger input event
+                promptBox.dispatchEvent(new Event('input', { bubbles: true }));
+                
+                // Visual feedback
+                const button = document.activeElement;
+                if (button) {
+                    const originalText = button.textContent;
+                    button.textContent = 'Added! ✓';
+                    setTimeout(() => {
+                        button.textContent = originalText;
+                    }, 1000);
+                }
+            }
+            """
+        )
     
     # Connect LoRA dropdown change event to update keywords
     lora_dropdown.change(
@@ -276,13 +377,9 @@ def create_keywords_ui(gr_lib, lora_dropdown, lora_enabled):
 
 # JavaScript for keyword selection
 keywords_js = """
-// Direct event handler attached to each keyword tag
-function keywordClickHandler(event, element) {
-    // Stop event propagation
-    event.preventDefault();
-    event.stopPropagation();
-    
-    console.log('Keyword clicked:', element.textContent);
+// Simple direct keyword click handler
+function keywordClickHandler(element) {
+    if (!element) return;
     
     // Toggle the selected class
     element.classList.toggle('selected');
@@ -291,79 +388,68 @@ function keywordClickHandler(event, element) {
     const container = element.closest('.lora-keywords-container');
     if (!container) return;
     
-    // Find the keywords input field
-    let keywordsInput = null;
+    // Find the selected keywords input
+    let selectedArea = null;
     
-    // First method: Look for a nearby textbox with lora_selected in the ID
-    const column = container.closest('.keywords-ui-container');
-    if (column) {
-        keywordsInput = column.querySelector('textarea[id*="lora_selected"]');
+    // Try different methods to find the input
+    
+    // Method 1: Find by closest div with keywords-ui-container and then find the textarea
+    const uiContainer = container.closest('.keywords-ui-container');
+    if (uiContainer) {
+        selectedArea = uiContainer.querySelector('textarea[id*="lora_selected"]');
     }
     
-    // Second method: Look up 5 levels for any element containing lora_selected in the ID
-    if (!keywordsInput) {
-        let parent = container.parentElement;
-        for (let i = 0; parent && i < 5; i++) {
-            const found = parent.querySelector('textarea[id*="lora_selected"]');
-            if (found) {
-                keywordsInput = found;
-                break;
+    // Method 2: Get all elements with lora_selected in id and find closest
+    if (!selectedArea) {
+        const allSelected = document.querySelectorAll('[id*="lora_selected"]');
+        if (allSelected.length > 0) {
+            // If only one, use it
+            if (allSelected.length === 1) {
+                selectedArea = allSelected[0];
+            } else {
+                // Find closest by DOM traversal
+                let parent = container;
+                let found = false;
+                
+                // Go up to 5 levels up looking for a matching element
+                for (let i = 0; i < 5 && parent && !found; i++) {
+                    for (let j = 0; j < allSelected.length; j++) {
+                        if (parent.contains(allSelected[j])) {
+                            selectedArea = allSelected[j];
+                            found = true;
+                            break;
+                        }
+                    }
+                    parent = parent.parentElement;
+                }
+                
+                // If still not found, use the first one
+                if (!selectedArea) {
+                    selectedArea = allSelected[0];
+                }
             }
-            parent = parent.parentElement;
         }
     }
     
-    // If we found the input, update it
-    if (keywordsInput) {
-        console.log('Found keywords input:', keywordsInput.id);
-        
+    if (selectedArea) {
         // Get all selected keywords
         const selectedTags = container.querySelectorAll('.keyword-tag.selected');
-        const selectedValues = Array.from(selectedTags).map(tag => tag.textContent.trim());
-        const selectedText = selectedValues.join(', ');
-        
-        console.log('Selected keywords:', selectedText);
+        const selectedKeywords = Array.from(selectedTags).map(tag => tag.textContent.trim()).join(', ');
         
         // Update the input value
-        keywordsInput.value = selectedText;
+        selectedArea.value = selectedKeywords;
         
-        // Trigger input events
-        keywordsInput.dispatchEvent(new Event('input', { bubbles: true }));
-        keywordsInput.dispatchEvent(new Event('change', { bubbles: true }));
-    } else {
-        console.error('Could not find keywords input field');
+        // Trigger input event
+        selectedArea.dispatchEvent(new Event('input', { bubbles: true }));
     }
-    
-    return false;
 }
 
-// Set up the page after load
+// Add styles for better keyword display
 document.addEventListener('DOMContentLoaded', function() {
-    console.log('DOM loaded - initializing LoRA Keywords');
-    setupKeywordStyles();
-    
-    // Set up a mutation observer to watch for new elements being added
-    const observer = new MutationObserver(function(mutations) {
-        mutations.forEach(function(mutation) {
-            if (mutation.addedNodes && mutation.addedNodes.length > 0) {
-                setupKeywordStyles();
-            }
-        });
-    });
-    
-    // Observe the whole document for changes
-    observer.observe(document.body, {
-        childList: true,
-        subtree: true
-    });
-});
-
-// Set up the styles
-function setupKeywordStyles() {
-    // Make sure style is added only once
-    if (!document.getElementById('lora-keywords-styles')) {
+    // Add styles if not already added
+    if (!document.getElementById('lora-keywords-style')) {
         const style = document.createElement('style');
-        style.id = 'lora-keywords-styles';
+        style.id = 'lora-keywords-style';
         style.textContent = `
             .lora-keywords-container {
                 display: flex !important;
@@ -436,34 +522,10 @@ function setupKeywordStyles() {
                 transform: translateY(-1px) !important;
                 border-color: #1976D2 !important;
             }
-            
-            /* Style the buttons */
-            .copy-keywords-button, .add-keywords-button {
-                min-width: 130px !important;
-                height: auto !important;
-                padding: 8px 16px !important;
-            }
-            
-            /* Make the selected keywords textbox more visible */
-            .selected-keywords textarea {
-                border: 2px solid rgba(33, 150, 243, 0.5) !important;
-                padding: 8px !important;
-                font-weight: bold !important;
-                background-color: rgba(33, 150, 243, 0.05) !important;
-            }
-            
-            .keywords-ui-container {
-                margin-top: 10px !important;
-                margin-bottom: 20px !important;
-                padding: 10px !important;
-                border: 1px solid rgba(0, 0, 0, 0.1) !important;
-                border-radius: 8px !important;
-                background-color: rgba(255, 255, 255, 0.5) !important;
-            }
         `;
         document.head.appendChild(style);
     }
-}
+});
 """
 
 # Initialize
