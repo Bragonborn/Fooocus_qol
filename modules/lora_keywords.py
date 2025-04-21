@@ -175,16 +175,26 @@ def generate_keywords_html(keywords, selected=None):
     return html
 
 def update_keywords_display(lora_filename, enabled):
-    # Don't show keywords if disabled or no LoRA selected
+    # Always show the UI container, but display different content based on state
     if not enabled or lora_filename == "None":
-        return gr.update(visible=False), gr.update(value=""), gr.update(value="")
+        # Even when disabled, show a message rather than hiding completely
+        message = "<div class='keywords-info-message'>Select a LoRA and enable it to see keywords</div>"
+        return gr.update(visible=True), gr.update(value=message), gr.update(value="")
     
     # Get metadata for the selected LoRA
     try:
         metadata = get_lora_metadata(lora_filename)
+        
+        # If no keywords found, show a helpful message instead of hiding
         if not metadata or not metadata.get("keywords") or len(metadata.get("keywords", [])) == 0:
             print(f"No keywords found for LoRA: {lora_filename}")
-            return gr.update(visible=False), gr.update(value=""), gr.update(value="")
+            message = f"<div class='keywords-info-message'>No keywords found for LoRA: {lora_filename}</div>"
+            message += "<div>Checking CivitAI for metadata...</div>"
+            
+            # Try to fetch metadata in the background
+            threading.Thread(target=lambda: get_lora_metadata(lora_filename, refresh=True), daemon=True).start()
+            
+            return gr.update(visible=True), gr.update(value=message), gr.update(value="")
         
         # Generate HTML for keywords display
         keywords = metadata.get("keywords", [])
@@ -195,11 +205,16 @@ def update_keywords_display(lora_filename, enabled):
         return gr.update(visible=True), gr.update(value=html), gr.update(value="")
     except Exception as e:
         print(f"Error displaying keywords for {lora_filename}: {e}")
-        return gr.update(visible=False), gr.update(value=""), gr.update(value="")
+        error_message = f"<div class='keywords-error-message'>Error retrieving keywords: {str(e)}</div>"
+        return gr.update(visible=True), gr.update(value=error_message), gr.update(value="")
 
 def create_keywords_ui(gr_lib, lora_dropdown, lora_enabled):
-    # Create a container for the keywords UI
-    with gr_lib.Column(visible=False, elem_classes=["keywords-ui-container"]) as keywords_column:
+    # Create a container for the keywords UI - set visible by default to ensure it's rendered
+    with gr_lib.Column(elem_classes=["keywords-ui-container"], visible=True) as keywords_column:
+        # Add a clear header to make it stand out
+        gr_lib.Markdown("### LoRA Keywords", elem_classes=["keywords-header"])
+        
+        # Make elements more visible with improved styling
         keywords_html = gr_lib.HTML(
             label="Keywords - Click to select",
             elem_id=f"lora_keywords_{lora_dropdown.elem_id}",
@@ -208,19 +223,22 @@ def create_keywords_ui(gr_lib, lora_dropdown, lora_enabled):
         selected_keywords = gr_lib.Textbox(
             label="Selected Keywords",
             elem_id=f"lora_selected_{lora_dropdown.elem_id}",
-            elem_classes=["selected-keywords"]
+            elem_classes=["selected-keywords"],
+            lines=2  # Make the textbox taller for better visibility
         )
         
         with gr_lib.Row():
             copy_button = gr_lib.Button(
                 "Copy to Clipboard",
                 elem_id=f"copy_keywords_{lora_dropdown.elem_id}",
-                elem_classes=["copy-keywords-button", "small-button"]
+                elem_classes=["copy-keywords-button", "small-button"],
+                variant="primary"  # Make the button more visible
             )
             add_button = gr_lib.Button(
                 "Add to Prompt",
                 elem_id=f"add_keywords_{lora_dropdown.elem_id}",
-                elem_classes=["add-keywords-button", "small-button"]
+                elem_classes=["add-keywords-button", "small-button"],
+                variant="primary"  # Make the button more visible
             )
     
     # Connect LoRA dropdown change event to update keywords
@@ -368,44 +386,96 @@ function toggleKeyword(element) {
 
 document.head.insertAdjacentHTML('beforeend', `<style>
 .lora-keywords-container {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 5px;
-    margin-top: 8px;
-    max-height: 120px;
-    overflow-y: auto;
-    padding: 8px;
-    border-radius: 6px;
-    background-color: rgba(0, 0, 0, 0.05);
-    border: 1px solid rgba(0, 0, 0, 0.1);
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 5px !important;
+    margin-top: 8px !important;
+    max-height: 150px !important;
+    overflow-y: auto !important;
+    padding: 10px !important;
+    border-radius: 8px !important;
+    background-color: rgba(0, 0, 0, 0.075) !important;
+    border: 2px solid rgba(33, 150, 243, 0.3) !important;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1) !important;
+}
+
+.keywords-header {
+    margin-bottom: 5px !important;
+    color: #2196F3 !important;
+    font-weight: bold !important;
+}
+
+.keywords-info-message {
+    padding: 15px !important;
+    background-color: rgba(33, 150, 243, 0.1) !important;
+    border-left: 4px solid #2196F3 !important;
+    margin: 8px 0 !important;
+    color: #333 !important;
+}
+
+.keywords-error-message {
+    padding: 15px !important;
+    background-color: rgba(244, 67, 54, 0.1) !important;
+    border-left: 4px solid #f44336 !important;
+    margin: 8px 0 !important;
+    color: #333 !important;
 }
 .keyword-tag {
-    display: inline-block;
-    background-color: #e0e0e0;
-    border-radius: 4px;
-    padding: 6px 10px;
-    font-size: 13px;
+    display: inline-block !important;
+    background-color: #e0e0e0 !important;
+    border-radius: 4px !important;
+    padding: 8px 12px !important;
+    font-size: 14px !important;
     cursor: pointer !important;
-    user-select: none;
-    transition: all 0.2s ease;
-    border: 1px solid rgba(0, 0, 0, 0.15);
-    margin: 3px;
-    position: relative;
-    z-index: 10;
+    user-select: none !important;
+    transition: all 0.2s ease !important;
+    border: 1px solid rgba(0, 0, 0, 0.15) !important;
+    margin: 4px !important;
+    position: relative !important;
+    z-index: 10 !important;
+    text-align: center !important;
+    font-weight: normal !important;
+}
+
+/* Style the buttons */
+.copy-keywords-button, .add-keywords-button {
+    min-width: 130px !important;
+    height: auto !important;
+    padding: 8px 16px !important;
+}
+
+/* Make the selected keywords textbox more visible */
+.selected-keywords textarea {
+    border: 2px solid rgba(33, 150, 243, 0.5) !important;
+    padding: 8px !important;
+    font-weight: bold !important;
+    background-color: rgba(33, 150, 243, 0.05) !important;
+}
+
+.keywords-ui-container {
+    margin-top: 10px !important;
+    margin-bottom: 20px !important;
+    padding: 10px !important;
+    border: 1px solid rgba(0, 0, 0, 0.1) !important;
+    border-radius: 8px !important;
+    background-color: rgba(255, 255, 255, 0.5) !important;
 }
 .keyword-tag:hover {
-    background-color: #d0d0d0;
-    transform: translateY(-1px);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-    z-index: 20;
+    background-color: #d0d0d0 !important;
+    transform: translateY(-2px) !important;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2) !important;
+    z-index: 20 !important;
     cursor: pointer !important;
     pointer-events: auto !important;
+    color: #000 !important;
 }
 .keyword-tag.selected {
-    background-color: #2196F3;
-    color: white;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-    font-weight: bold;
+    background-color: #2196F3 !important;
+    color: white !important;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.25) !important;
+    font-weight: bold !important;
+    transform: translateY(-1px) !important;
+    border-color: #1976D2 !important;
 }
 /* Target only our specific elements without affecting the rest of the UI */
 div[id^="lora_keywords_"] {

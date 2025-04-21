@@ -693,9 +693,10 @@ with shared.gradio_root:
                                                     elem_classes='lora_weight', scale=5)
                             lora_ctrls += [lora_enabled, lora_model, lora_weight]
                             
-                        # Add keywords UI components
-                        keywords_ui = modules.lora_keywords.create_keywords_ui(gr, lora_model, lora_enabled)
-                        lora_keywords_components.append(keywords_ui)
+                        # Add keywords UI components directly in the row for better visibility
+                        with gr.Row():
+                            keywords_ui = modules.lora_keywords.create_keywords_ui(gr, lora_model, lora_enabled)
+                            lora_keywords_components.append(keywords_ui)
                         
                         # Connect copy button to clipboard
                         keywords_ui["copy_button"].click(
