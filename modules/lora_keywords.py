@@ -31,32 +31,26 @@ def process_requests():
                 time.sleep(max(0, 60 - (now - request_times[0])))
             
             # Process request
+            request_times.append(time.time())
             func, args, result_queue = request_queue.get()
             try:
-                request_times.append(time.time())
                 result = func(*args)
                 result_queue.put((True, result))
             except Exception as e:
-                result_queue.put((False, str(e)))
-            finally:
-                request_queue.task_done()
+                print(f"Error processing request: {e}")
+                result_queue.put((False, None))
+            
+            request_queue.task_done()
         else:
             time.sleep(0.1)
 
+# Queue an API request for rate limiting
 def queue_api_request(func, *args):
-    global request_thread, is_running
     result_queue = Queue()
     request_queue.put((func, args, result_queue))
-    
-    # Start thread if not running
-    if not is_running or not request_thread or not request_thread.is_alive():
-        is_running = True
-        request_thread = threading.Thread(target=process_requests, daemon=True)
-        request_thread.start()
-    
     return result_queue
 
-# Metadata functions
+# Metadata helpers
 def get_metadata_path(lora_path):
     return f"{lora_path}.civitai.json"
 
@@ -168,9 +162,25 @@ def generate_keywords_html(keywords, selected=None):
     selected = selected or []
     html = '<div class="lora-keywords-container">'
     
+    # Process each keyword - split comma-separated values
+    processed_keywords = []
     for kw in keywords:
+        # Split by comma and strip whitespace
+        if ',' in kw:
+            split_keywords = [k.strip() for k in kw.split(',')]
+            processed_keywords.extend(split_keywords)
+        else:
+            processed_keywords.append(kw.strip())
+    
+    # Make them unique
+    processed_keywords = list(dict.fromkeys(processed_keywords))
+    
+    # Generate HTML for each keyword
+    for kw in processed_keywords:
+        if not kw:  # Skip empty keywords
+            continue
         cls = " selected" if kw in selected else ""
-        html += f'<div class="keyword-tag{cls}" data-keyword="{kw}" onclick="toggleKeyword(this)">{kw}</div>'
+        html += f'<div class="keyword-tag{cls}" data-keyword="{kw}" onclick="keywordClickHandler(event, this)">{kw}</div>'
     
     html += '</div>'
     return html
@@ -217,12 +227,12 @@ def create_keywords_ui(gr_lib, lora_dropdown, lora_enabled):
         
         # Make elements more visible with improved styling
         keywords_html = gr_lib.HTML(
-            label="Keywords - Click to select",
+            label="Keywords - Click to select", 
             elem_id=f"lora_keywords_{lora_dropdown.elem_id}",
             elem_classes=["keywords-display"]
         )
         selected_keywords = gr_lib.Textbox(
-            label="Selected Keywords",
+            label="Selected Keywords", 
             elem_id=f"lora_selected_{lora_dropdown.elem_id}",
             elem_classes=["selected-keywords"],
             lines=2  # Make the textbox taller for better visibility
@@ -230,13 +240,13 @@ def create_keywords_ui(gr_lib, lora_dropdown, lora_enabled):
         
         with gr_lib.Row():
             copy_button = gr_lib.Button(
-                "Copy to Clipboard",
+                "Copy to Clipboard", 
                 elem_id=f"copy_keywords_{lora_dropdown.elem_id}",
                 elem_classes=["copy-keywords-button", "small-button"],
                 variant="primary"  # Make the button more visible
             )
             add_button = gr_lib.Button(
-                "Add to Prompt",
+                "Add to Prompt", 
                 elem_id=f"add_keywords_{lora_dropdown.elem_id}",
                 elem_classes=["add-keywords-button", "small-button"],
                 variant="primary"  # Make the button more visible
@@ -266,226 +276,194 @@ def create_keywords_ui(gr_lib, lora_dropdown, lora_enabled):
 
 # JavaScript for keyword selection
 keywords_js = """
-// Less invasive initialization - only run once the DOM is fully loaded
-(function() {
-    // Wait for the page to be fully loaded
-    if (document.readyState === 'complete') {
-        initializeKeywords();
-    } else {
-        window.addEventListener('load', initializeKeywords);
+// Direct event handler attached to each keyword tag
+function keywordClickHandler(event, element) {
+    // Stop event propagation
+    event.preventDefault();
+    event.stopPropagation();
+    
+    console.log('Keyword clicked:', element.textContent);
+    
+    // Toggle the selected class
+    element.classList.toggle('selected');
+    
+    // Find the container
+    const container = element.closest('.lora-keywords-container');
+    if (!container) return;
+    
+    // Find the keywords input field
+    let keywordsInput = null;
+    
+    // First method: Look for a nearby textbox with lora_selected in the ID
+    const column = container.closest('.keywords-ui-container');
+    if (column) {
+        keywordsInput = column.querySelector('textarea[id*="lora_selected"]');
     }
     
-    function initializeKeywords() {
-        console.log('LoRA Keywords: Initializing keyword functionality');
-        setupKeywordFunctionality();
-        
-        // Create a more targeted observer that only watches for our keyword elements
-        const observer = new MutationObserver(function(mutations) {
-            for (const mutation of mutations) {
-                // Only process if we have added nodes
-                if (mutation.addedNodes && mutation.addedNodes.length > 0) {
-                    // Check if any of the added nodes contain our keywords containers
-                    for (const node of mutation.addedNodes) {
-                        if (node.querySelector && node.querySelector('.keyword-tag, [id^="lora_keywords_"]')) {
-                            setupKeywordFunctionality();
-                            break;
-                        }
-                    }
-                }
+    // Second method: Look up 5 levels for any element containing lora_selected in the ID
+    if (!keywordsInput) {
+        let parent = container.parentElement;
+        for (let i = 0; parent && i < 5; i++) {
+            const found = parent.querySelector('textarea[id*="lora_selected"]');
+            if (found) {
+                keywordsInput = found;
+                break;
             }
-        });
-        
-        // Only observe the main content area where our elements would be added
-        const mainContent = document.querySelector('.gradio-container');
-        if (mainContent) {
-            observer.observe(mainContent, {
-                childList: true,
-                subtree: true,
-                attributes: false,
-                characterData: false
-            });
+            parent = parent.parentElement;
         }
     }
-})();
-
-function setupKeywordFunctionality() {
-    // Use a specific selector that only targets our keyword tags
-    document.querySelectorAll('[id^="lora_keywords_"] .keyword-tag').forEach(function(element) {
-        // Remove any existing handler first to avoid duplicates
-        element.removeEventListener('click', keywordClickHandler);
-        // Add our handler
-        element.addEventListener('click', keywordClickHandler);
-    });
-}
-
-function keywordClickHandler(event) {
-    // Stop event propagation to prevent interfering with other elements
-    event.stopPropagation();
-    event.preventDefault();
     
-    try {
-        toggleKeyword(this);
-    } catch(e) {
-        console.error('Error toggling keyword:', e);
+    // If we found the input, update it
+    if (keywordsInput) {
+        console.log('Found keywords input:', keywordsInput.id);
+        
+        // Get all selected keywords
+        const selectedTags = container.querySelectorAll('.keyword-tag.selected');
+        const selectedValues = Array.from(selectedTags).map(tag => tag.textContent.trim());
+        const selectedText = selectedValues.join(', ');
+        
+        console.log('Selected keywords:', selectedText);
+        
+        // Update the input value
+        keywordsInput.value = selectedText;
+        
+        // Trigger input events
+        keywordsInput.dispatchEvent(new Event('input', { bubbles: true }));
+        keywordsInput.dispatchEvent(new Event('change', { bubbles: true }));
+    } else {
+        console.error('Could not find keywords input field');
     }
     
     return false;
 }
 
-function toggleKeyword(element) {
-    // Don't do anything that could affect the broader UI
-    // Just toggle our specific element's class in a contained way
-    if (!element || typeof element.classList === 'undefined') return;
+// Set up the page after load
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('DOM loaded - initializing LoRA Keywords');
+    setupKeywordStyles();
     
-    try {
-        // Simply toggle the selected class - minimal DOM manipulation
-        element.classList.toggle('selected');
-        
-        // Find the container in a direct, specific way
-        const container = element.closest('.lora-keywords-container');
-        if (!container) return;
-        
-        // Get the ID of the keywords element to find the corresponding selected area
-        // Look for a nearby element with id that matches our pattern
-        let keywordsElement = container;
-        while (keywordsElement && (!keywordsElement.id || !keywordsElement.id.includes('lora_keywords_'))) {
-            keywordsElement = keywordsElement.parentElement;
-            if (!keywordsElement || keywordsElement.classList.contains('gradio-container')) break;
-        }
-        
-        if (!keywordsElement || !keywordsElement.id) return;
-        
-        // Extract the matching part to find the related selected input
-        const idParts = keywordsElement.id.split('lora_keywords_');
-        if (idParts.length !== 2) return;
-        
-        // Find the matching selected keywords input
-        const selectedElementId = 'lora_selected_' + idParts[1];
-        const selectedArea = document.getElementById(selectedElementId);
-        
-        if (!selectedArea) return;
-        
-        // Get only selected keywords from our container
-        const selectedKeywords = Array.from(
-            container.querySelectorAll('.keyword-tag.selected')
-        ).map(el => el.textContent.trim()).join(', ');
-        
-        // Update the value without affecting the rest of the UI
-        selectedArea.value = selectedKeywords;
-        
-        // Trigger the input event in a safe way
-        try {
-            // Create a contained input event
-            const inputEvent = new Event('input', {
-                bubbles: false,  // Don't bubble up to avoid affecting other components
-                cancelable: false
-            });
-            selectedArea.dispatchEvent(inputEvent);
-        } catch (ignored) {}
-    } catch (ignored) {}
-}
+    // Set up a mutation observer to watch for new elements being added
+    const observer = new MutationObserver(function(mutations) {
+        mutations.forEach(function(mutation) {
+            if (mutation.addedNodes && mutation.addedNodes.length > 0) {
+                setupKeywordStyles();
+            }
+        });
+    });
+    
+    // Observe the whole document for changes
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true
+    });
+});
 
-document.head.insertAdjacentHTML('beforeend', `<style>
-.lora-keywords-container {
-    display: flex !important;
-    flex-wrap: wrap !important;
-    gap: 5px !important;
-    margin-top: 8px !important;
-    max-height: 150px !important;
-    overflow-y: auto !important;
-    padding: 10px !important;
-    border-radius: 8px !important;
-    background-color: rgba(0, 0, 0, 0.075) !important;
-    border: 2px solid rgba(33, 150, 243, 0.3) !important;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1) !important;
+// Set up the styles
+function setupKeywordStyles() {
+    // Make sure style is added only once
+    if (!document.getElementById('lora-keywords-styles')) {
+        const style = document.createElement('style');
+        style.id = 'lora-keywords-styles';
+        style.textContent = `
+            .lora-keywords-container {
+                display: flex !important;
+                flex-wrap: wrap !important;
+                gap: 5px !important;
+                margin-top: 8px !important;
+                max-height: 150px !important;
+                overflow-y: auto !important;
+                padding: 10px !important;
+                border-radius: 8px !important;
+                background-color: rgba(0, 0, 0, 0.075) !important;
+                border: 2px solid rgba(33, 150, 243, 0.3) !important;
+                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1) !important;
+            }
+            
+            .keywords-header {
+                margin-bottom: 5px !important;
+                color: #2196F3 !important;
+                font-weight: bold !important;
+            }
+            
+            .keywords-info-message {
+                padding: 15px !important;
+                background-color: rgba(33, 150, 243, 0.1) !important;
+                border-left: 4px solid #2196F3 !important;
+                margin: 8px 0 !important;
+                color: #333 !important;
+            }
+            
+            .keywords-error-message {
+                padding: 15px !important;
+                background-color: rgba(244, 67, 54, 0.1) !important;
+                border-left: 4px solid #f44336 !important;
+                margin: 8px 0 !important;
+                color: #333 !important;
+            }
+            
+            .keyword-tag {
+                display: inline-block !important;
+                background-color: #e0e0e0 !important;
+                border-radius: 4px !important;
+                padding: 8px 12px !important;
+                font-size: 14px !important;
+                cursor: pointer !important;
+                user-select: none !important;
+                transition: all 0.2s ease !important;
+                border: 1px solid rgba(0, 0, 0, 0.15) !important;
+                margin: 4px !important;
+                position: relative !important;
+                z-index: 10 !important;
+                text-align: center !important;
+                font-weight: normal !important;
+            }
+            
+            .keyword-tag:hover {
+                background-color: #d0d0d0 !important;
+                transform: translateY(-2px) !important;
+                box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2) !important;
+                z-index: 20 !important;
+                cursor: pointer !important;
+                pointer-events: auto !important;
+                color: #000 !important;
+            }
+            
+            .keyword-tag.selected {
+                background-color: #2196F3 !important;
+                color: white !important;
+                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.25) !important;
+                font-weight: bold !important;
+                transform: translateY(-1px) !important;
+                border-color: #1976D2 !important;
+            }
+            
+            /* Style the buttons */
+            .copy-keywords-button, .add-keywords-button {
+                min-width: 130px !important;
+                height: auto !important;
+                padding: 8px 16px !important;
+            }
+            
+            /* Make the selected keywords textbox more visible */
+            .selected-keywords textarea {
+                border: 2px solid rgba(33, 150, 243, 0.5) !important;
+                padding: 8px !important;
+                font-weight: bold !important;
+                background-color: rgba(33, 150, 243, 0.05) !important;
+            }
+            
+            .keywords-ui-container {
+                margin-top: 10px !important;
+                margin-bottom: 20px !important;
+                padding: 10px !important;
+                border: 1px solid rgba(0, 0, 0, 0.1) !important;
+                border-radius: 8px !important;
+                background-color: rgba(255, 255, 255, 0.5) !important;
+            }
+        `;
+        document.head.appendChild(style);
+    }
 }
-
-.keywords-header {
-    margin-bottom: 5px !important;
-    color: #2196F3 !important;
-    font-weight: bold !important;
-}
-
-.keywords-info-message {
-    padding: 15px !important;
-    background-color: rgba(33, 150, 243, 0.1) !important;
-    border-left: 4px solid #2196F3 !important;
-    margin: 8px 0 !important;
-    color: #333 !important;
-}
-
-.keywords-error-message {
-    padding: 15px !important;
-    background-color: rgba(244, 67, 54, 0.1) !important;
-    border-left: 4px solid #f44336 !important;
-    margin: 8px 0 !important;
-    color: #333 !important;
-}
-.keyword-tag {
-    display: inline-block !important;
-    background-color: #e0e0e0 !important;
-    border-radius: 4px !important;
-    padding: 8px 12px !important;
-    font-size: 14px !important;
-    cursor: pointer !important;
-    user-select: none !important;
-    transition: all 0.2s ease !important;
-    border: 1px solid rgba(0, 0, 0, 0.15) !important;
-    margin: 4px !important;
-    position: relative !important;
-    z-index: 10 !important;
-    text-align: center !important;
-    font-weight: normal !important;
-}
-
-/* Style the buttons */
-.copy-keywords-button, .add-keywords-button {
-    min-width: 130px !important;
-    height: auto !important;
-    padding: 8px 16px !important;
-}
-
-/* Make the selected keywords textbox more visible */
-.selected-keywords textarea {
-    border: 2px solid rgba(33, 150, 243, 0.5) !important;
-    padding: 8px !important;
-    font-weight: bold !important;
-    background-color: rgba(33, 150, 243, 0.05) !important;
-}
-
-.keywords-ui-container {
-    margin-top: 10px !important;
-    margin-bottom: 20px !important;
-    padding: 10px !important;
-    border: 1px solid rgba(0, 0, 0, 0.1) !important;
-    border-radius: 8px !important;
-    background-color: rgba(255, 255, 255, 0.5) !important;
-}
-.keyword-tag:hover {
-    background-color: #d0d0d0 !important;
-    transform: translateY(-2px) !important;
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2) !important;
-    z-index: 20 !important;
-    cursor: pointer !important;
-    pointer-events: auto !important;
-    color: #000 !important;
-}
-.keyword-tag.selected {
-    background-color: #2196F3 !important;
-    color: white !important;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.25) !important;
-    font-weight: bold !important;
-    transform: translateY(-1px) !important;
-    border-color: #1976D2 !important;
-}
-/* Target only our specific elements without affecting the rest of the UI */
-div[id^="lora_keywords_"] {
-    pointer-events: auto !important;
-}
-div.keyword-tag {
-    pointer-events: auto !important;
-}
-</style>`);
 """
 
 # Initialize
